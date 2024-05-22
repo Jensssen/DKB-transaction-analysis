@@ -232,3 +232,10 @@ class DKBApi:
             return response.json()
         else:
             raise DKBApiError(f'Requesting accounts failed with response code {response.status_code}')
+
+    def get_transactions(self, account_id: str) -> Dict[str, List[Dict[str, str]]]:
+        response = self.session.get(self.base_url + self.api_prefix + f"/accounts/accounts/{account_id}/transactions")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise DKBApiError(f'Requesting transactions failed with response code {response.status_code}')

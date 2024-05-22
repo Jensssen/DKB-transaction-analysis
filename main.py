@@ -12,6 +12,7 @@ def main(username: str, password: str) -> None:
     dkb_api.login()
 
     account_info = dkb_api.get_accounts()
+    transactions = dkb_api.get_transactions(account_info["data"][0]["id"])
 
 
 if __name__ == '__main__':
