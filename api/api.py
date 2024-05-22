@@ -17,19 +17,19 @@ class DKBApi:
     account_Dict = None
     mfa_token = None
 
-    def __init__(self, dkb_user: str, dkb_password: str, mfa_device: int = None):
+    def __init__(self, dkb_user: str, dkb_password: str, mfa_device_idx: int = None):
         """
         DKB API client handler.
 
         Args:
             dkb_user: Your DKB Username.
             dkb_password: Your DKB Password.
-            mfa_device: Integer, indicating which mfa device you want to use to authenticate.
-                        Interactive selection, if set to None. Should be zero if you have only one active mfa device.
+            mfa_device_idx: Integer, indicating which mfa device you want to use to authenticate. Interactive selection,
+                            if set to None. Should be zero if you have only one active mfa device.
         """
         self.dkb_user = dkb_user
         self.dkb_password = dkb_password
-        self.mfa_device = mfa_device
+        self.mfa_device_idx = mfa_device_idx
 
     def _new_session(self) -> requests.Session:
         # Setup header that mimics typical browser request to avoid being blocked or detection as a bot by the server.
@@ -73,7 +73,7 @@ class DKBApi:
         else:
             raise DKBApiError(f'Login failed: 1st factor authentication failed. RC: {response.status_code}')
 
-    def _get_mfa_devices(self) -> Dict[str, List[Dict[str, str]]]:
+    def _get_mfa_devices(self) -> Dict[str, List[Dict[str, str | Dict[str, str]]]]:
         response = self.session.get(
             self.base_url + self.api_prefix + f'/mfa/mfa/methods?filter%5BmethodType%5D={self.mfa_method}')
         if response.status_code == 200:
@@ -82,18 +82,40 @@ class DKBApi:
             raise DKBApiError(f'Requesting available mfa devices failed. RC: {response.status_code}')
 
     @staticmethod
-    def _sort_mfa_devices(mfa_dict: Dict) -> Dict[str, List[str]]:
+    def _sort_mfa_devices(mfa_dict: Dict) -> Dict[str, List[Dict[str, str | Dict[str, str]]]]:
         """ sort mfa devices by preferred device and age."""
         device_list = mfa_dict['data']
         device_list.sort(key=lambda x: (-x['attributes']['preferredDevice'], x['attributes']['enrolledAt']))
         return {'data': device_list}
+
+    @staticmethod
+    def _select_mfa_device(mfa_dict: Dict[str, List[Dict[str, str | Dict[str, str]]]]) -> int:
+        device_idx_list = [idx for idx in range(0, len(mfa_dict['data']))]
+        device_selection_completed = False
+        while not device_selection_completed:
+            print('\nPick an authentication device from the list below:')
+            for idx, device_dict in enumerate(mfa_dict['data']):
+                print(f"[{idx}] - {device_dict['attributes']['deviceName']}")
+
+            _tmp_device_num = input(':')
+            try:
+                if int(_tmp_device_num) in device_idx_list:
+                    device_num = int(_tmp_device_num)
+                    return device_num
+                else:
+                    print(f'\n{_tmp_device_num} not in list of available devices!')
+            except ValueError:
+                print(f"Invalid input {_tmp_device_num}. Expect integer.")
 
     def authenticate_user(self) -> None:
         """Iterate through all authentication steps, including 2fa."""
         self.mfa_token = self._get_token()
 
         mfa_devices = self._get_mfa_devices()
-        mfa_device = self._sort_mfa_devices(mfa_devices)
+        mfa_devices = self._sort_mfa_devices(mfa_devices)
+
+        if self.mfa_device_idx is None:
+            self.mfa_device_idx = self._select_mfa_device(mfa_devices)
 
         with open('session_cookies.pkl', 'wb') as f:
             pickle.dump(self.session.cookies, f)

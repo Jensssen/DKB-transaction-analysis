@@ -8,7 +8,7 @@ load_dotenv()
 
 
 def main(username: str, password: str) -> None:
-    dkb_api = DKBApi(dkb_user=username, dkb_password=password)
+    dkb_api = DKBApi(dkb_user=username, dkb_password=password, mfa_device_idx=0)
     dkb_api.login()
 
 
