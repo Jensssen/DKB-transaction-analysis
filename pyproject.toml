@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "dkb-transaction-analysis"
+version = "0.1.0"
+description = "This project queries and analyses your past DKB transactions via a reverse engineered DKB API."
+authors = ["Jensssen <soeren.erichsen@gmx.de>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = "^2.32.2"
+python-dotenv = "^1.0.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
