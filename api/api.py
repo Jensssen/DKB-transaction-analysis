@@ -129,23 +129,51 @@ class DKBApi:
                 challenge_dict = response.json()
                 if 'data' in challenge_dict and 'id' in challenge_dict['data'] and 'type' in challenge_dict['data']:
                     if challenge_dict['data']['type'] == 'mfa-challenge':
-                        challenge_id = challenge_dict['data']['id']
+                        # we remove the headers we added earlier
+                        self.session.headers.pop('Content-Type')
+                        self.session.headers.pop('Accept')
+                        return challenge_dict['data']['id'], device_name
                     else:
                         raise DKBApiError(
                             f"Challenge type should be mfa-challenge but is {challenge_dict['data']['type']}")
                 else:
-                    raise DKBApiError(f'MFA challenge response format is other than expected: {challenge_dict}')
+                    raise DKBApiError(f'MFA challenge response format has missing keys: {challenge_dict}')
             else:
                 raise DKBApiError(f'MFA challenge request failed with response code: {response.status_code}')
 
-            # we remove the headers we added earlier
-            self.session.headers.pop('Content-Type')
-            self.session.headers.pop('Accept')
-
         except KeyError:
-            raise 'The selected mfa device has an unexpected data structure. No id key present.'
+            raise 'The selected mfa device has an unexpected data structure.'
 
-        return challenge_id, device_name
+    @staticmethod
+    def _check_processing_status(polling_dict: Dict[str, Dict[str | Dict[str, str]]]) -> bool:
+        if (polling_dict['data']['attributes']['verificationStatus']) == 'processed':
+            return True
+        elif (polling_dict['data']['attributes']['verificationStatus']) == 'canceled':
+            raise DKBApiError('2 factor authentication got canceled by user.')
+        return False
+
+    def _complete_2fa(self, challenge_id: str, device_name: str) -> bool:
+        """
+        Loop for 50 seconds and check the 2fa status of the user every 5 seconds. If the status changes to \"processed\"
+        the 2fa was successfully.
+        """
+        print(f'Check your banking app on \""{device_name}"\" and confirm login...')
+        cnt = 0
+        while cnt <= 10:
+            response = self.session.get(self.base_url + self.api_prefix + f"/mfa/mfa/challenges/{challenge_id}")
+            cnt += 1
+            if response.status_code == 200:
+                mfa_auth_status = response.json()
+                if 'data' in mfa_auth_status and 'attributes' in mfa_auth_status['data'] and 'verificationStatus' in \
+                        mfa_auth_status['data']['attributes']:
+                    if self._check_processing_status(mfa_auth_status):
+                        break
+                else:
+                    raise DKBApiError(f'MFA challenge status response format has missing keys: {mfa_auth_status}')
+            else:
+                raise DKBApiError(f'MFA challenge status request failed with response code: {response.status_code}')
+            time.sleep(5)
+        return True
 
     def authenticate_user(self) -> None:
         """Iterate through all authentication steps, including 2fa."""
@@ -158,6 +186,8 @@ class DKBApi:
             self.mfa_device_idx = self._select_mfa_device(mfa_devices)
 
         mfa_challenge_id, device_name = self._get_mfa_challenge_id(mfa_devices["data"][self.mfa_device_idx])
+
+        mfa_completed = self._complete_2fa(mfa_challenge_id, device_name)
 
         with open('session_cookies.pkl', 'wb') as f:
             pickle.dump(self.session.cookies, f)
