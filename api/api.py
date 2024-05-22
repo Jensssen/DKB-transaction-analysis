@@ -13,7 +13,7 @@ class DKBApi:
     base_url = 'https://banking.dkb.de'
     api_prefix = '/api'
     mfa_method = 'seal_one'
-    session_timeout = -1
+    session_timeout = 600
     session = None
     account_Dict = None
     mfa_token = None
@@ -145,11 +145,11 @@ class DKBApi:
             raise 'The selected mfa device has an unexpected data structure.'
 
     @staticmethod
-    def _check_processing_status(polling_dict: Dict[str, Dict[str | Dict[str, str]]]) -> bool:
+    def _check_processing_status(polling_dict: Dict[str, Dict[str, str | Dict[str, str]]]) -> bool:
         if (polling_dict['data']['attributes']['verificationStatus']) == 'processed':
             return True
         elif (polling_dict['data']['attributes']['verificationStatus']) == 'canceled':
-            raise DKBApiError('2 factor authentication got canceled by user.')
+            raise DKBApiError('2 factor authentication got canceled by user or timeout')
         return False
 
     def _complete_2fa(self, challenge_id: str, device_name: str) -> bool:
@@ -157,8 +157,9 @@ class DKBApi:
         Loop for 50 seconds and check the 2fa status of the user every 5 seconds. If the status changes to \"processed\"
         the 2fa was successfully.
         """
-        print(f'Check your banking app on \""{device_name}"\" and confirm login...')
+        print(f'Check your banking app on "{device_name}" and confirm login...')
         cnt = 0
+        mfa_completed = False
         while cnt <= 10:
             response = self.session.get(self.base_url + self.api_prefix + f"/mfa/mfa/challenges/{challenge_id}")
             cnt += 1
@@ -166,14 +167,25 @@ class DKBApi:
                 mfa_auth_status = response.json()
                 if 'data' in mfa_auth_status and 'attributes' in mfa_auth_status['data'] and 'verificationStatus' in \
                         mfa_auth_status['data']['attributes']:
-                    if self._check_processing_status(mfa_auth_status):
+                    mfa_completed = self._check_processing_status(mfa_auth_status)
+                    if mfa_completed:
                         break
                 else:
                     raise DKBApiError(f'MFA challenge status response format has missing keys: {mfa_auth_status}')
             else:
                 raise DKBApiError(f'MFA challenge status request failed with response code: {response.status_code}')
             time.sleep(5)
-        return True
+        return mfa_completed
+
+    def _update_token(self):
+        """Update token information with 2fa information."""
+        data_dict = {'grant_type': 'banking_user_mfa', 'mfa_id': self.mfa_token['mfa_id'],
+                     'access_token': self.mfa_token['access_token']}
+        response = self.session.post(self.base_url + self.api_prefix + '/token', data=data_dict)
+        if response.status_code == 200:
+            self.token_dict = response.json()
+        else:
+            raise DKBApiError(f'Token update failed with status code: {response.status_code}')
 
     def authenticate_user(self) -> None:
         """Iterate through all authentication steps, including 2fa."""
@@ -188,6 +200,15 @@ class DKBApi:
         mfa_challenge_id, device_name = self._get_mfa_challenge_id(mfa_devices["data"][self.mfa_device_idx])
 
         mfa_completed = self._complete_2fa(mfa_challenge_id, device_name)
+
+        # update token Dictionary
+        if mfa_completed:
+            self._update_token()
+        else:
+            raise DKBApiError('Login failed: mfa did not complete')
+
+        if self.token_dict['token_factor_type'] != '2fa':
+            raise DKBApiError('Login failed: 2nd factor authentication did not complete')
 
         with open('session_cookies.pkl', 'wb') as f:
             pickle.dump(self.session.cookies, f)
