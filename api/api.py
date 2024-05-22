@@ -1,7 +1,8 @@
+import json
 import os
 import pickle
 import time
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import requests
 
@@ -66,14 +67,14 @@ class DKBApi:
         response = self.session.post(self.base_url + self.api_prefix + '/token', data=data_dict)
         if response.status_code == 200:
             mfa_token = response.json()
-            if 'access_token' not in mfa_token:
+            if 'access_token' not in mfa_token or 'mfa_id' not in mfa_token:
                 raise DKBApiError('No 1fa access token available.')
             else:
                 return mfa_token
         else:
             raise DKBApiError(f'Login failed: 1st factor authentication failed. RC: {response.status_code}')
 
-    def _get_mfa_devices(self) -> Dict[str, List[Dict[str, str | Dict[str, str]]]]:
+    def _get_mfa_devices(self) -> Dict[str, List[Dict[str, str | Dict[str, str | int]]]]:
         response = self.session.get(
             self.base_url + self.api_prefix + f'/mfa/mfa/methods?filter%5BmethodType%5D={self.mfa_method}')
         if response.status_code == 200:
@@ -82,14 +83,14 @@ class DKBApi:
             raise DKBApiError(f'Requesting available mfa devices failed. RC: {response.status_code}')
 
     @staticmethod
-    def _sort_mfa_devices(mfa_dict: Dict) -> Dict[str, List[Dict[str, str | Dict[str, str]]]]:
+    def _sort_mfa_devices(mfa_dict: Dict) -> Dict[str, List[Dict[str, str | Dict[str, str | int]]]]:
         """ sort mfa devices by preferred device and age."""
         device_list = mfa_dict['data']
         device_list.sort(key=lambda x: (-x['attributes']['preferredDevice'], x['attributes']['enrolledAt']))
         return {'data': device_list}
 
     @staticmethod
-    def _select_mfa_device(mfa_dict: Dict[str, List[Dict[str, str | Dict[str, str]]]]) -> int:
+    def _select_mfa_device(mfa_dict: Dict[str, List[Dict[str, str | Dict[str, str | int]]]]) -> int:
         device_idx_list = [idx for idx in range(0, len(mfa_dict['data']))]
         device_selection_completed = False
         while not device_selection_completed:
@@ -97,15 +98,54 @@ class DKBApi:
             for idx, device_dict in enumerate(mfa_dict['data']):
                 print(f"[{idx}] - {device_dict['attributes']['deviceName']}")
 
-            _tmp_device_num = input(':')
+            _tmp_device_idx = input(':')
             try:
-                if int(_tmp_device_num) in device_idx_list:
-                    device_num = int(_tmp_device_num)
-                    return device_num
+                if int(_tmp_device_idx) in device_idx_list:
+                    return int(_tmp_device_idx)
                 else:
-                    print(f'\n{_tmp_device_num} not in list of available devices!')
+                    print(f'\n{_tmp_device_idx} not in list of available devices!')
             except ValueError:
-                print(f"Invalid input {_tmp_device_num}. Expect integer.")
+                print(f"Invalid input {_tmp_device_idx}. Expect integer.")
+
+    def _get_mfa_challenge_id(self, mfa_dict: Dict[str, str | Dict[str, str | int]]) -> Tuple[str, str]:
+        """Get challenge Dict with information on the 2nd factor"""
+        try:
+            try:
+                device_name = mfa_dict['attributes']['deviceName']
+            except KeyError:
+                print('Device Name in selected mfa device not found.')
+                device_name = "Unknown Device"
+
+            self.session.headers['Content-Type'] = 'application/vnd.api+json'
+            self.session.headers["Accept"] = 'application/vnd.api+json'
+
+            data_dict = {'data': {'type': 'mfa-challenge', 'attributes': {'mfaId': self.mfa_token['mfa_id'],
+                                                                          'methodId': mfa_dict['id'],
+                                                                          'methodType': self.mfa_method}}}
+            response = self.session.post(self.base_url + self.api_prefix + '/mfa/mfa/challenges',
+                                         data=json.dumps(data_dict))
+
+            if response.status_code in (200, 201):
+                challenge_dict = response.json()
+                if 'data' in challenge_dict and 'id' in challenge_dict['data'] and 'type' in challenge_dict['data']:
+                    if challenge_dict['data']['type'] == 'mfa-challenge':
+                        challenge_id = challenge_dict['data']['id']
+                    else:
+                        raise DKBApiError(
+                            f"Challenge type should be mfa-challenge but is {challenge_dict['data']['type']}")
+                else:
+                    raise DKBApiError(f'MFA challenge response format is other than expected: {challenge_dict}')
+            else:
+                raise DKBApiError(f'MFA challenge request failed with response code: {response.status_code}')
+
+            # we remove the headers we added earlier
+            self.session.headers.pop('Content-Type')
+            self.session.headers.pop('Accept')
+
+        except KeyError:
+            raise 'The selected mfa device has an unexpected data structure. No id key present.'
+
+        return challenge_id, device_name
 
     def authenticate_user(self) -> None:
         """Iterate through all authentication steps, including 2fa."""
@@ -116,6 +156,8 @@ class DKBApi:
 
         if self.mfa_device_idx is None:
             self.mfa_device_idx = self._select_mfa_device(mfa_devices)
+
+        mfa_challenge_id, device_name = self._get_mfa_challenge_id(mfa_devices["data"][self.mfa_device_idx])
 
         with open('session_cookies.pkl', 'wb') as f:
             pickle.dump(self.session.cookies, f)
