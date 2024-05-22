@@ -9,6 +9,7 @@ load_dotenv()
 
 def main(username: str, password: str) -> None:
     dkb_api = DKBApi(dkb_user=username, dkb_password=password)
+    dkb_api.login()
 
 
 if __name__ == '__main__':
