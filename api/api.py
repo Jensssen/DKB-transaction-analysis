@@ -1,9 +1,10 @@
 import os
 import pickle
 import time
-from typing import Dict
+from typing import Dict, List
 
 import requests
+
 from api.exceptions import DKBApiError
 
 
@@ -64,13 +65,35 @@ class DKBApi:
                      'sca_type': 'web-login'}
         response = self.session.post(self.base_url + self.api_prefix + '/token', data=data_dict)
         if response.status_code == 200:
-            return response.json()
+            mfa_token = response.json()
+            if 'access_token' not in mfa_token:
+                raise DKBApiError('No 1fa access token available.')
+            else:
+                return mfa_token
         else:
             raise DKBApiError(f'Login failed: 1st factor authentication failed. RC: {response.status_code}')
+
+    def _get_mfa_devices(self) -> Dict[str, List[Dict[str, str]]]:
+        response = self.session.get(
+            self.base_url + self.api_prefix + f'/mfa/mfa/methods?filter%5BmethodType%5D={self.mfa_method}')
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise DKBApiError(f'Requesting available mfa devices failed. RC: {response.status_code}')
+
+    @staticmethod
+    def _sort_mfa_devices(mfa_dict: Dict) -> Dict[str, List[str]]:
+        """ sort mfa devices by preferred device and age."""
+        device_list = mfa_dict['data']
+        device_list.sort(key=lambda x: (-x['attributes']['preferredDevice'], x['attributes']['enrolledAt']))
+        return {'data': device_list}
 
     def authenticate_user(self) -> None:
         """Iterate through all authentication steps, including 2fa."""
         self.mfa_token = self._get_token()
+
+        mfa_devices = self._get_mfa_devices()
+        mfa_device = self._sort_mfa_devices(mfa_devices)
 
         with open('session_cookies.pkl', 'wb') as f:
             pickle.dump(self.session.cookies, f)
