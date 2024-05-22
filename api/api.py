@@ -72,7 +72,7 @@ class DKBApi:
             else:
                 return mfa_token
         else:
-            raise DKBApiError(f'Login failed: 1st factor authentication failed. RC: {response.status_code}')
+            raise DKBApiError(f'1st factor authentication request failed with response code: {response.status_code}')
 
     def _get_mfa_devices(self) -> Dict[str, List[Dict[str, str | Dict[str, str | int]]]]:
         response = self.session.get(
@@ -80,7 +80,7 @@ class DKBApi:
         if response.status_code == 200:
             return response.json()
         else:
-            raise DKBApiError(f'Requesting available mfa devices failed. RC: {response.status_code}')
+            raise DKBApiError(f'Requesting available mfa devices failed with response code: {response.status_code}')
 
     @staticmethod
     def _sort_mfa_devices(mfa_dict: Dict) -> Dict[str, List[Dict[str, str | Dict[str, str | int]]]]:
@@ -225,3 +225,10 @@ class DKBApi:
                 self.authenticate_user()
         else:
             self.authenticate_user()
+
+    def get_accounts(self) -> Dict[str, List[Dict[str, str]]]:
+        response = self.session.get(self.base_url + self.api_prefix + '/accounts/accounts')
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise DKBApiError(f'Requesting accounts failed with response code {response.status_code}')
