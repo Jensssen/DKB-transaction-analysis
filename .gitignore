@@ -161,3 +161,6 @@ cython_debug/
 
 # Session cookies object
 session_cookies.pkl
+
+# google sheets api creds
+credentials.json
