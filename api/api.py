@@ -13,7 +13,7 @@ class DKBApi:
     base_url = 'https://banking.dkb.de'
     api_prefix = '/api'
     mfa_method = 'seal_one'
-    session_timeout = 600
+    session_timeout = 300
     session = None
     account_Dict = None
     mfa_token = None
