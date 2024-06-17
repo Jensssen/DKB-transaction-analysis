@@ -22,8 +22,11 @@ class GoogleSheetsApi:
         if not creds or not creds.valid:
             try:
                 creds.refresh(Request())
-            except RefreshError:
-                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", self.scope)
+            except (RefreshError, AttributeError):
+                try:
+                    flow = InstalledAppFlow.from_client_secrets_file("credentials.json", self.scope)
+                except FileNotFoundError:
+                    raise "You have not activated your Google Sheet API (How to: https://developers.google.com/sheets/api/quickstart/go#enable_the_api)"
                 creds = flow.run_local_server(port=0)
             with open("token.json", "w") as token:
                 token.write(creds.to_json())
